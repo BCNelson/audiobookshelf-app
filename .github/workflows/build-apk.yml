@@ -36,11 +36,11 @@ jobs:
       - name: copy to Android project
         run: npx cap sync
 
-      - name: build Android app
-        run: ./android/gradlew assembleDebug -p android --no-daemon
-
       - name: run Android unit tests
         run: ./android/gradlew testDebugUnitTest -p android --no-daemon
+
+      - name: build Android app
+        run: ./android/gradlew assembleDebug -p android --no-daemon
 
       - name: rename apk
         working-directory: android/app/build/outputs/apk/debug/
