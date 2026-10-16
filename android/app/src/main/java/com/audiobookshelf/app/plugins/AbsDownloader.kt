@@ -10,6 +10,7 @@ import com.audiobookshelf.app.models.DownloadItemPart
 import com.audiobookshelf.app.server.ApiHandler
 import com.audiobookshelf.app.managers.DownloadItemManager
 import com.audiobookshelf.app.managers.DownloadNetworkMonitor
+import com.audiobookshelf.app.managers.DownloadNetworkPolicy
 import com.audiobookshelf.app.services.DownloadServiceHost
 import com.fasterxml.jackson.core.json.JsonReadFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -121,10 +122,9 @@ class AbsDownloader : Plugin() {
     val setting = DeviceManager.deviceData.deviceSettings?.downloadUsingCellular ?: DownloadUsingCellularSetting.ALWAYS
     val metered = DownloadNetworkMonitor.isMeteredNow(mainActivity)
     fun resolveMode(mode: String) = call.resolve(JSObject().put("networkMode", mode).put("metered", metered))
+    val initialMode = DownloadNetworkPolicy.initialMode(setting, metered)
     when {
-      setting == DownloadUsingCellularSetting.NEVER -> resolveMode(DownloadItem.NETWORK_MODE_WIFI_ONLY)
-      setting == DownloadUsingCellularSetting.ALWAYS -> resolveMode(DownloadItem.NETWORK_MODE_CELLULAR)
-      !metered -> resolveMode(DownloadItem.NETWORK_MODE_WIFI_PREFERRED)
+      initialMode != null -> resolveMode(initialMode)
       else ->
               mainActivity.runOnUiThread {
                 var resolved = false

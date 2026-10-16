@@ -52,7 +52,8 @@ class DownloadItemManager(
   private val lastPersistTime = mutableMapOf<String, Long>()
   private val finalizingItems = mutableSetOf<String>()
   private val refreshingServerIds = mutableSetOf<String>()
-  private val apiHandler = ApiHandler(context)
+  // Only needed after a 401; it opens the keystore, so create it on first use
+  private val apiHandler by lazy { ApiHandler(context) }
   private val networkMonitor = DownloadNetworkMonitor(context) { onNetworkChanged() }
   private var watcherRunning = false
   private var paused = false
@@ -85,11 +86,6 @@ class DownloadItemManager(
     fun onComplete(failed: Boolean)
     fun onPermanentFailure(reason: String)
     fun onAuthError()
-  }
-
-  private enum class NetworkBlock {
-    OFFLINE,
-    WIFI_REQUIRED
   }
 
   @Synchronized
@@ -311,9 +307,7 @@ class DownloadItemManager(
    * Mode for a download the user just started without choosing one. The frontend only starts a
    * download on a metered network once the policy or the user allowed it.
    */
-  private fun defaultNetworkMode(): String =
-          if (networkMonitor.isMetered) DownloadItem.NETWORK_MODE_CELLULAR
-          else DownloadItem.NETWORK_MODE_WIFI_PREFERRED
+  private fun defaultNetworkMode(): String = DownloadNetworkPolicy.defaultMode(networkMonitor.isMetered)
 
   /** Lets a download use metered networks, from the notification (all paused) or the UI (one item). */
   @Synchronized
@@ -340,45 +334,34 @@ class DownloadItemManager(
           }
                   ?: DownloadUsingCellularSetting.ALWAYS
 
-  private fun networkBlock(item: DownloadItem): NetworkBlock? {
-    if (!networkMonitor.isConnected) return NetworkBlock.OFFLINE
-    if (!networkMonitor.isMetered) return null
-    return when (cellularSetting()) {
-      DownloadUsingCellularSetting.ALWAYS -> null
-      DownloadUsingCellularSetting.ASK ->
-              if (item.networkMode == DownloadItem.NETWORK_MODE_CELLULAR) null else NetworkBlock.WIFI_REQUIRED
-      DownloadUsingCellularSetting.NEVER -> NetworkBlock.WIFI_REQUIRED
-    }
-  }
+  private fun networkBlock(item: DownloadItem): DownloadNetworkPolicy.Block? =
+          DownloadNetworkPolicy.block(
+                  cellularSetting(), networkMonitor.isConnected, networkMonitor.isMetered, item.networkMode)
 
   private fun hasPendingParts(item: DownloadItem): Boolean =
           item.downloadItemParts.any { !it.moved && !it.failed && !it.completed }
 
   @Synchronized
   private fun updateCellularApproval() {
+    val setting = cellularSetting()
     val waitingItems =
-            if (!networkMonitor.isConnected ||
-                            !networkMonitor.isMetered ||
-                            cellularSetting() != DownloadUsingCellularSetting.ASK
-            ) 0
-            else
-                    downloadItemQueue.count {
-                      it.networkMode != DownloadItem.NETWORK_MODE_CELLULAR &&
-                              it.networkMode != DownloadItem.NETWORK_MODE_WIFI_ONLY &&
-                              hasPendingParts(it)
-                    }
+            downloadItemQueue.count {
+              hasPendingParts(it) &&
+                      DownloadNetworkPolicy.needsCellularApproval(
+                              setting, networkMonitor.isConnected, networkMonitor.isMetered, it.networkMode)
+            }
     if (waitingItems == lastCellularApproval) return
     lastCellularApproval = waitingItems
     clientEventEmitter.onCellularApprovalChanged(waitingItems)
   }
 
   /** Marks queued parts as waiting on the network so the UI and notification can say why. */
-  private fun markNetworkWait(item: DownloadItem, block: NetworkBlock?) {
+  private fun markNetworkWait(item: DownloadItem, block: DownloadNetworkPolicy.Block?) {
     item.downloadItemParts
             .filter { !it.moved && !it.failed && !it.completed && it !in currentDownloadItemParts }
             .forEach { part ->
-              val waitingForNetwork = block == NetworkBlock.OFFLINE
-              val waitingForWifi = block == NetworkBlock.WIFI_REQUIRED
+              val waitingForNetwork = block == DownloadNetworkPolicy.Block.OFFLINE
+              val waitingForWifi = block == DownloadNetworkPolicy.Block.WIFI_REQUIRED
               if (part.waitingForNetwork == waitingForNetwork && part.waitingForWifi == waitingForWifi)
                       return@forEach
               part.waitingForNetwork = waitingForNetwork
@@ -401,7 +384,7 @@ class DownloadItemManager(
         return@forEach
       }
       item.downloadItemParts.filter { it in currentDownloadItemParts && !it.completed && !it.isMoving }.forEach { part ->
-        AbsLogger.info(tag, "Pausing ${part.filename}: ${if (block == NetworkBlock.OFFLINE) "offline" else "Wi-Fi required"}")
+        AbsLogger.info(tag, "Pausing ${part.filename}: ${if (block == DownloadNetworkPolicy.Block.OFFLINE) "offline" else "Wi-Fi required"}")
         activeCalls[part.id]?.cancel()
         removeActivePart(part)
         reservations.remove(part.destinationPath)
