@@ -54,7 +54,6 @@ class DownloadItemManager(
   private val refreshingServerIds = mutableSetOf<String>()
   // Only needed after a 401; it opens the keystore, so create it on first use
   private val apiHandler by lazy { ApiHandler(context) }
-  private val networkMonitor = DownloadNetworkMonitor(context) { onNetworkChanged() }
   private var watcherRunning = false
   private var paused = false
   private var lastNeedsCpu: Boolean? = null
@@ -67,6 +66,11 @@ class DownloadItemManager(
     private set
   var currentDownloadItemParts: MutableList<DownloadItemPart> = mutableListOf()
     private set
+
+  // Declared after every field onNetworkChanged reads: its callback can fire on the
+  // ConnectivityThread as soon as it registers, before the constructor finishes.
+  private val networkMonitor = DownloadNetworkMonitor(context) { onNetworkChanged() }
+  private var wasConnected = networkMonitor.isConnected
 
   interface DownloadEventEmitter {
     fun onDownloadItem(downloadItem: DownloadItem)
@@ -270,21 +274,28 @@ class DownloadItemManager(
                     }
                   }
 
-  /** Waiting on the network or storage needs no CPU; the network callback wakes the queue. */
+  /**
+   * True while a transfer runs or is due within [CPU_HOLD_BEFORE_RETRY_MS]. Waiting on the
+   * network or storage, or a long retry backoff, needs no CPU: the network callback wakes the
+   * queue, and a long backoff simply retries on the device's next wake instead of holding a wake
+   * lock for minutes against an unreachable server.
+   */
   @Synchronized
-  private fun needsCpu(): Boolean =
-          !paused &&
-                  (currentDownloadItemParts.isNotEmpty() ||
-                          finalizingItems.isNotEmpty() ||
-                          downloadItemQueue.any { item ->
-                            item.downloadItemParts.any { part ->
-                              !part.moved &&
-                                      !part.failed &&
-                                      !part.waitingForNetwork &&
-                                      !part.waitingForWifi &&
-                                      !part.waitingForSpace
-                            }
-                          })
+  private fun needsCpu(): Boolean {
+    if (paused) return false
+    if (currentDownloadItemParts.isNotEmpty() || finalizingItems.isNotEmpty()) return true
+    val now = System.currentTimeMillis()
+    return downloadItemQueue.any { item ->
+      item.downloadItemParts.any { part ->
+        !part.moved &&
+                !part.failed &&
+                !part.waitingForNetwork &&
+                !part.waitingForWifi &&
+                !part.waitingForSpace &&
+                part.nextAttemptAt - now <= CPU_HOLD_BEFORE_RETRY_MS
+      }
+    }
+  }
 
   /** Re-sends the current state, e.g. to a freshly started service. */
   @Synchronized
@@ -377,10 +388,21 @@ class DownloadItemManager(
   @Synchronized
   private fun onNetworkChanged() {
     val now = System.currentTimeMillis()
+    // Failures while offline were caused by the outage, so retry those now. Other changes
+    // (metered flips, handovers) keep the backoff so a flaky link cannot hammer the server.
+    val reconnected = networkMonitor.isConnected && !wasConnected
+    wasConnected = networkMonitor.isConnected
     downloadItemQueue.toList().forEach { item ->
       val block = networkBlock(item)
       if (block == null) {
-        item.downloadItemParts.forEach { if (!it.moved && !it.failed) it.nextAttemptAt = 0L }
+        if (reconnected) {
+          item.downloadItemParts
+                  .filter { !it.moved && !it.failed && it.nextAttemptAt > now }
+                  .forEach {
+                    it.nextAttemptAt = 0L
+                    clientEventEmitter.onDownloadItemPartUpdate(it)
+                  }
+        }
         return@forEach
       }
       item.downloadItemParts.filter { it in currentDownloadItemParts && !it.completed && !it.isMoving }.forEach { part ->
@@ -407,6 +429,9 @@ class DownloadItemManager(
     if (paused) return
     val now = System.currentTimeMillis()
     downloadItemQueue.toList().forEach { item ->
+      // Label every item, including those that will not get a slot this pass.
+      val block = networkBlock(item)
+      markNetworkWait(item, block)
       var slots = MAX_SIMULTANEOUS_DOWNLOADS - currentDownloadItemParts.size
       if (slots <= 0) return@forEach
       item.downloadItemParts
@@ -424,8 +449,6 @@ class DownloadItemManager(
                 currentDownloadItemParts.add(part)
                 part.downloadId = APP_MANAGED_DOWNLOAD_ID
               }
-      val block = networkBlock(item)
-      markNetworkWait(item, block)
       if (block != null) return@forEach
       slots = MAX_SIMULTANEOUS_DOWNLOADS - currentDownloadItemParts.size
       if (slots <= 0) return@forEach
@@ -751,8 +774,10 @@ class DownloadItemManager(
     notifyQueueChanged()
   }
 
+  /** Runs under the manager lock so a cancel cannot land between the rename and completePart. */
+  @Synchronized
   private fun finalizeInternalFile(item: DownloadItem, part: DownloadItemPart) {
-    if (part.moved || part.isMoving) return
+    if (part.moved || part.isMoving || !isQueued(item)) return
     part.isMoving = true
     val stagingFile = File(part.destinationPath)
     val finalFile = File(part.finalDestinationPath)
@@ -1096,6 +1121,7 @@ class DownloadItemManager(
     const val STALL_TIMEOUT_MS = 60_000L
     const val RETRY_BASE_DELAY_MS = 2_000L
     const val RETRY_MAX_DELAY_MS = 5L * 60L * 1000L
+    const val CPU_HOLD_BEFORE_RETRY_MS = 30_000L
     const val MAX_FINALIZE_RETRIES = 5
     const val MAX_AUTH_RETRIES = 2
     const val PERSIST_INTERVAL_MS = 2_000L

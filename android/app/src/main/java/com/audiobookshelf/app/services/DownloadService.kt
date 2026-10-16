@@ -22,6 +22,8 @@ import com.audiobookshelf.app.plugins.AbsLogger
 class DownloadService : Service() {
   private var wakeLock: PowerManager.WakeLock? = null
   private var wifiLock: WifiManager.WifiLock? = null
+  /** Set before teardown so a late setNeedsCpu from a worker thread cannot re-acquire the locks. */
+  private var destroyed = false
 
   override fun onCreate() {
     super.onCreate()
@@ -53,9 +55,12 @@ class DownloadService : Service() {
   }
 
   override fun onDestroy() {
-    releaseLocks()
-    notificationManager().cancel(APPROVAL_NOTIFICATION_ID)
     DownloadServiceHost.detachService(this)
+    synchronized(this) {
+      destroyed = true
+      releaseLocks()
+    }
+    notificationManager().cancel(APPROVAL_NOTIFICATION_ID)
     super.onDestroy()
   }
 
@@ -88,7 +93,9 @@ class DownloadService : Service() {
    * device keeps the connection alive without draining the battery while merely waiting.
    */
   @SuppressLint("WakelockTimeout")
+  @Synchronized
   fun setNeedsCpu(needsCpu: Boolean) {
+    if (destroyed) return
     if (!needsCpu) {
       releaseLocks()
       return

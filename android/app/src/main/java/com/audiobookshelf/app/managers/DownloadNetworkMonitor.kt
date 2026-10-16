@@ -31,13 +31,19 @@ class DownloadNetworkMonitor(context: Context, private val onChange: () -> Unit)
   var isMetered: Boolean = false
     private set
 
+  @Volatile private var defaultNetwork: Network? = null
+
   private val callback =
           object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+              defaultNetwork = network
               update(capabilities)
             }
 
             override fun onLost(network: Network) {
+              // A late onLost for the previous default must not mark a new default as offline.
+              if (defaultNetwork != null && network != defaultNetwork) return
+              defaultNetwork = null
               update(null)
             }
           }
@@ -57,7 +63,8 @@ class DownloadNetworkMonitor(context: Context, private val onChange: () -> Unit)
   }
 
   init {
-    update(connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork), notify = false)
+    defaultNetwork = connectivityManager.activeNetwork
+    update(connectivityManager.getNetworkCapabilities(defaultNetwork), notify = false)
     try {
       connectivityManager.registerDefaultNetworkCallback(callback)
     } catch (e: RuntimeException) {

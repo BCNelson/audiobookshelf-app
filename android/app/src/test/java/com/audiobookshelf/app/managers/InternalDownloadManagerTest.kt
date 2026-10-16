@@ -89,6 +89,25 @@ class InternalDownloadManagerTest {
   }
 
   @Test
+  fun prefersLastModifiedOverAWeakEtag() {
+    // If-Range requires strong comparison, so strict proxies would reject the weak ETag.
+    staging.writeBytes(content.copyOfRange(0, 1_000))
+    server.enqueue(partial(content, from = 1_000))
+    download(expectedSize = content.size.toLong(), etag = etag, lastModified = lastModified)
+
+    assertEquals(lastModified, server.takeRequest().getHeader("If-Range"))
+  }
+
+  @Test
+  fun prefersAStrongEtag() {
+    staging.writeBytes(content.copyOfRange(0, 1_000))
+    server.enqueue(partial(content, from = 1_000))
+    download(expectedSize = content.size.toLong(), etag = "\"strong-1\"", lastModified = lastModified)
+
+    assertEquals("\"strong-1\"", server.takeRequest().getHeader("If-Range"))
+  }
+
+  @Test
   fun changedServerFileReplacesThePartialInsteadOfAppending() {
     staging.writeBytes(content.copyOfRange(0, 20_000))
     val replacement = Random(7).nextBytes(50_000)

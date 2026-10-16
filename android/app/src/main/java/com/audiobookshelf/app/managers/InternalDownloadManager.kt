@@ -82,7 +82,7 @@ class InternalDownloadManager(
           allowRestart: Boolean
   ) {
     val existingBytes = destinationFile.takeIf { it.exists() }?.length() ?: 0L
-    val ifRange = if (existingBytes > 0L && allowRestart) etag ?: lastModified else null
+    val ifRange = if (existingBytes > 0L && allowRestart) ifRangeValidator() else null
     AbsLogger.info(
             tag,
             "Starting ${if (existingBytes > 0L) "resumed" else "new"} download for ${destinationFile.name} at byte $existingBytes")
@@ -212,6 +212,16 @@ class InternalDownloadManager(
               }
             }
     )
+  }
+
+  /**
+   * If-Range only allows strong comparison (RFC 9110 13.1.5), so a strict proxy would answer a
+   * weak ETag with the full file every time. Express sends weak ETags, so prefer Last-Modified
+   * and fall back to a weak ETag only when it is the sole validator (Express itself accepts it).
+   */
+  private fun ifRangeValidator(): String? {
+    val strongEtag = etag?.takeUnless { it.startsWith("W/") }
+    return strongEtag ?: lastModified ?: etag
   }
 
   private fun hasExpectedRange(response: Response, offset: Long): Boolean {

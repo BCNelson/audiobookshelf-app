@@ -12,7 +12,7 @@
           <p class="flex-grow font-semibold text-fg truncate pr-2">{{ downloadItem.itemTitle }}</p>
           <template v-if="isAndroid">
             <ui-btn v-if="hasStatus(downloadItem, 'retrying')" small class="mr-2" :disabled="!!retryingNow[downloadItem.id]" @click="retryNow(downloadItem)">{{ $strings.ButtonRetryNow }}</ui-btn>
-            <ui-btn v-if="hasStatus(downloadItem, 'waitingForWifi')" small class="mr-2" @click="allowMobileData(downloadItem)">{{ $strings.ButtonAllowMobileData }}</ui-btn>
+            <ui-btn v-if="canAllowMobileData && hasStatus(downloadItem, 'waitingForWifi')" small class="mr-2" @click="allowMobileData(downloadItem)">{{ $strings.ButtonAllowMobileData }}</ui-btn>
             <ui-btn v-if="hasStatus(downloadItem, 'failed')" small class="mr-2" @click="retry(downloadItem)">{{ $strings.ButtonRetry }}</ui-btn>
             <ui-btn small color="error" :disabled="!!cancelling[downloadItem.id]" @click="cancel(downloadItem)">{{ $strings.ButtonCancel }}</ui-btn>
           </template>
@@ -63,6 +63,10 @@ export default {
       let parts = []
       this.downloadItems.forEach((di) => parts.push(...di.downloadItemParts))
       return parts
+    },
+    // Under "Wi-Fi only" the setting overrides a download's own mode, so the button would do nothing
+    canAllowMobileData() {
+      return this.$store.getters['getCanDownloadUsingCellular'] !== 'NEVER'
     },
     hasBackoff() {
       return this.downloadItemParts.some((part) => part.status === 'retrying')
