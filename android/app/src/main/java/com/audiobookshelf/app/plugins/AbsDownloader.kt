@@ -71,6 +71,7 @@ class AbsDownloader : Plugin() {
             call.getString("waitingForStorage") ?: "Waiting for available storage",
             call.getString("waitingForNetwork") ?: "Waiting for network connection",
             call.getString("waitingForWifi") ?: "Waiting for Wi-Fi",
+            call.getString("retrying") ?: "Connection lost; retrying {0} shortly",
             call.getString("cellularApprovalTitle") ?: "Downloads paused on mobile data",
             call.getString("cellularApprovalText") ?: "{0} download(s) are waiting for Wi-Fi",
             call.getString("useMobileData") ?: "Use mobile data",
@@ -91,6 +92,15 @@ class AbsDownloader : Plugin() {
   fun cancelAllDownloads(call: PluginCall) {
     DownloadServiceHost.cancelAll(mainActivity)
     call.resolve()
+  }
+
+  /** Starts an item's backed-off parts immediately instead of waiting for the retry delay. */
+  @PluginMethod
+  fun retryDownloadNow(call: PluginCall) {
+    val downloadItemId = call.getString("downloadItemId") ?: return call.reject("downloadItemId is required")
+    DownloadServiceHost.retryNow(mainActivity, downloadItemId) { retried ->
+      call.resolve(JSObject().put("retried", retried))
+    }
   }
 
   /** Lets one queued download use mobile data. */

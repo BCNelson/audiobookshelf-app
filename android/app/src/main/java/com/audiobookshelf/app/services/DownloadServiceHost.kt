@@ -27,6 +27,7 @@ object DownloadServiceHost {
           val waitingForStorage: String,
           val waitingForNetwork: String,
           val waitingForWifi: String,
+          val retrying: String,
           val cellularApprovalTitle: String,
           val cellularApprovalText: String,
           val useMobileData: String,
@@ -135,6 +136,14 @@ object DownloadServiceHost {
     }
   }
 
+  fun retryNow(context: Context, downloadItemId: String, callback: (Boolean) -> Unit) {
+    val queue = ensure(context)
+    scope.launch {
+      restoreJob?.join()
+      callback(queue.retryNow(downloadItemId))
+    }
+  }
+
   /** Lets one download (or, with null, every paused Wi-Fi preferred download) use mobile data. */
   fun allowCellular(context: Context, downloadItemId: String?) {
     val queue = ensure(context)
@@ -169,6 +178,7 @@ object DownloadServiceHost {
           waitingForStorage: String,
           waitingForNetwork: String,
           waitingForWifi: String,
+          retrying: String,
           cellularApprovalTitle: String,
           cellularApprovalText: String,
           useMobileData: String,
@@ -182,6 +192,7 @@ object DownloadServiceHost {
             .putString(KEY_WAITING_FOR_STORAGE, waitingForStorage)
             .putString(KEY_WAITING_FOR_NETWORK, waitingForNetwork)
             .putString(KEY_WAITING_FOR_WIFI, waitingForWifi)
+            .putString(KEY_RETRYING, retrying)
             .putString(KEY_CELLULAR_APPROVAL_TITLE, cellularApprovalTitle)
             .putString(KEY_CELLULAR_APPROVAL_TEXT, cellularApprovalText)
             .putString(KEY_USE_MOBILE_DATA, useMobileData)
@@ -202,6 +213,7 @@ object DownloadServiceHost {
                     ?: DEFAULT_WAITING_FOR_NETWORK,
             preferences.getString(KEY_WAITING_FOR_WIFI, DEFAULT_WAITING_FOR_WIFI)
                     ?: DEFAULT_WAITING_FOR_WIFI,
+            preferences.getString(KEY_RETRYING, DEFAULT_RETRYING) ?: DEFAULT_RETRYING,
             preferences.getString(KEY_CELLULAR_APPROVAL_TITLE, DEFAULT_CELLULAR_APPROVAL_TITLE)
                     ?: DEFAULT_CELLULAR_APPROVAL_TITLE,
             preferences.getString(KEY_CELLULAR_APPROVAL_TEXT, DEFAULT_CELLULAR_APPROVAL_TEXT)
@@ -284,6 +296,7 @@ object DownloadServiceHost {
   private const val KEY_WAITING_FOR_STORAGE = "waiting_for_storage"
   private const val KEY_WAITING_FOR_NETWORK = "waiting_for_network"
   private const val KEY_WAITING_FOR_WIFI = "waiting_for_wifi"
+  private const val KEY_RETRYING = "retrying"
   private const val KEY_CELLULAR_APPROVAL_TITLE = "cellular_approval_title"
   private const val KEY_CELLULAR_APPROVAL_TEXT = "cellular_approval_text"
   private const val KEY_USE_MOBILE_DATA = "use_mobile_data"
@@ -294,6 +307,7 @@ object DownloadServiceHost {
   private const val DEFAULT_WAITING_FOR_STORAGE = "Waiting for available storage"
   private const val DEFAULT_WAITING_FOR_NETWORK = "Waiting for network connection"
   private const val DEFAULT_WAITING_FOR_WIFI = "Waiting for Wi-Fi"
+  private const val DEFAULT_RETRYING = "Connection lost; retrying {0} shortly"
   private const val DEFAULT_CELLULAR_APPROVAL_TITLE = "Downloads paused on mobile data"
   private const val DEFAULT_CELLULAR_APPROVAL_TEXT = "{0} download(s) are waiting for Wi-Fi"
   private const val DEFAULT_USE_MOBILE_DATA = "Use mobile data"

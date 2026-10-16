@@ -11,6 +11,7 @@
         <div class="flex items-center mb-2">
           <p class="flex-grow font-semibold text-fg truncate pr-2">{{ downloadItem.itemTitle }}</p>
           <template v-if="isAndroid">
+            <ui-btn v-if="hasStatus(downloadItem, 'retrying')" small class="mr-2" :disabled="!!retryingNow[downloadItem.id]" @click="retryNow(downloadItem)">{{ $strings.ButtonRetryNow }}</ui-btn>
             <ui-btn v-if="hasStatus(downloadItem, 'waitingForWifi')" small class="mr-2" @click="allowMobileData(downloadItem)">{{ $strings.ButtonAllowMobileData }}</ui-btn>
             <ui-btn v-if="hasStatus(downloadItem, 'failed')" small class="mr-2" @click="retry(downloadItem)">{{ $strings.ButtonRetry }}</ui-btn>
             <ui-btn small color="error" :disabled="!!cancelling[downloadItem.id]" @click="cancel(downloadItem)">{{ $strings.ButtonCancel }}</ui-btn>
@@ -21,6 +22,7 @@
             <div class="w-14">
               <span v-if="itemPart.completed" class="material-symbols text-success">check_circle</span>
               <span v-else-if="itemPart.status === 'failed'" class="material-symbols text-error">error</span>
+              <span v-else-if="partStatus(itemPart) === 'retrying'" class="material-symbols text-warning">schedule</span>
               <span v-else class="font-semibold text-fg">{{ Math.round(itemPart.progress) }}%</span>
             </div>
             <div class="flex-grow px-2 min-w-0">
@@ -43,7 +45,11 @@ export default {
   mixins: [cellularPermissionHelpers],
   data() {
     return {
-      cancelling: {}
+      cancelling: {},
+      retryingNow: {},
+      // Wall clock for retry countdowns; ticks only while something is backing off
+      now: Date.now(),
+      clockTimer: null
     }
   },
   computed: {
@@ -57,17 +63,48 @@ export default {
       let parts = []
       this.downloadItems.forEach((di) => parts.push(...di.downloadItemParts))
       return parts
+    },
+    hasBackoff() {
+      return this.downloadItemParts.some((part) => part.status === 'retrying')
     }
+  },
+  watch: {
+    hasBackoff: {
+      immediate: true,
+      handler(hasBackoff) {
+        clearInterval(this.clockTimer)
+        this.clockTimer = null
+        if (!hasBackoff) return
+        this.now = Date.now()
+        this.clockTimer = setInterval(() => (this.now = Date.now()), 1000)
+      }
+    }
+  },
+  beforeDestroy() {
+    clearInterval(this.clockTimer)
   },
   methods: {
     hasStatus(downloadItem, status) {
-      return downloadItem.downloadItemParts.some((part) => part.status === status)
+      return downloadItem.downloadItemParts.some((part) => this.partStatus(part) === status)
+    },
+    /** The native status is a snapshot, so treat an expired backoff as about to start. */
+    partStatus(itemPart) {
+      if (itemPart.status === 'retrying' && itemPart.nextAttemptAt <= this.now) return 'retryStarting'
+      return itemPart.status
+    },
+    formatCountdown(ms) {
+      const totalSeconds = Math.max(1, Math.ceil(ms / 1000))
+      const minutes = Math.floor(totalSeconds / 60)
+      const seconds = totalSeconds % 60
+      return minutes ? `${minutes}:${String(seconds).padStart(2, '0')}` : `${seconds}s`
     },
     statusLabel(itemPart) {
-      switch (itemPart.status) {
+      switch (this.partStatus(itemPart)) {
         case 'queued':
           return this.$strings.LabelDownloadStatusQueued
         case 'retrying':
+          return this.$getString('LabelDownloadStatusRetryingIn', [this.formatCountdown(itemPart.nextAttemptAt - this.now)])
+        case 'retryStarting':
           return this.$strings.LabelDownloadStatusRetrying
         case 'waitingForNetwork':
           return this.$strings.MessageWaitingForNetwork
@@ -97,6 +134,16 @@ export default {
     async cancelAll() {
       await AbsDownloader.cancelAllDownloads()
       this.$store.commit('globals/clearItemDownloads')
+    },
+    async retryNow(downloadItem) {
+      this.$set(this.retryingNow, downloadItem.id, true)
+      try {
+        await AbsDownloader.retryDownloadNow({ downloadItemId: downloadItem.id })
+      } catch (error) {
+        console.error('Failed to retry download', error)
+      } finally {
+        this.$delete(this.retryingNow, downloadItem.id)
+      }
     },
     allowMobileData(downloadItem) {
       AbsDownloader.allowCellularDownload({ downloadItemId: downloadItem.id })

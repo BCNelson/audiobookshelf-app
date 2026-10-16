@@ -41,8 +41,8 @@ data class DownloadItemPart(
   @JsonIgnore var authRetryCount: Int = 0,
   @JsonIgnore var waitingForSpace: Boolean = false,
   @JsonIgnore var reusedExistingFile: Boolean = false,
-  /** Earliest wall-clock time the next transfer attempt may start, for retry backoff. */
-  @JsonIgnore var nextAttemptAt: Long = 0L,
+  /** Earliest wall-clock time (epoch ms) the next attempt may start; the UI shows it as a countdown. */
+  var nextAttemptAt: Long = 0L,
   /** Validators from the server response, sent as If-Range so a changed file restarts from zero. */
   @JsonIgnore var etag: String? = null,
   @JsonIgnore var lastModified: String? = null,

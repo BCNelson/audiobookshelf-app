@@ -55,6 +55,7 @@ function syncDownloadNotificationStrings() {
     waitingForStorage: Vue.prototype.$strings.MessageWaitingForAvailableStorage,
     waitingForNetwork: Vue.prototype.$strings.MessageWaitingForNetwork,
     waitingForWifi: Vue.prototype.$strings.MessageWaitingForWifi,
+    retrying: Vue.prototype.$strings.MessageRetryingDownload,
     cellularApprovalTitle: Vue.prototype.$strings.MessageDownloadsPausedOnMobileData,
     cellularApprovalText: Vue.prototype.$strings.MessageDownloadsWaitingForWifiCount,
     useMobileData: Vue.prototype.$strings.ButtonAllowMobileData,

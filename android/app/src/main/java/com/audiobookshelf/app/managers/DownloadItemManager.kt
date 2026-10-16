@@ -162,6 +162,24 @@ class DownloadItemManager(
     return true
   }
 
+  /** Skips the retry backoff for an item's waiting parts. Returns false if nothing was backing off. */
+  @Synchronized
+  fun retryNow(downloadItemId: String): Boolean {
+    val item = downloadItemQueue.find { it.id == downloadItemId } ?: return false
+    val now = System.currentTimeMillis()
+    val backingOff =
+            item.downloadItemParts.filter { !it.moved && !it.failed && it.downloadId == null && it.nextAttemptAt > now }
+    if (backingOff.isEmpty()) return false
+    AbsLogger.info(tag, "Retrying ${item.id} now, skipping backoff")
+    backingOff.forEach { part ->
+      part.nextAttemptAt = 0L
+      clientEventEmitter.onDownloadItemPartUpdate(part)
+    }
+    persist(item, force = true)
+    checkUpdateDownloadQueue()
+    return true
+  }
+
   @Synchronized
   fun resumeWork() {
     paused = false

@@ -68,6 +68,7 @@ class DownloadService : Service() {
               part.waitingForSpace -> strings.waitingForStorage
               part.waitingForWifi -> strings.waitingForWifi
               part.waitingForNetwork -> strings.waitingForNetwork
+              part.status == "retrying" -> strings.retrying.replace("{0}", part.filename)
               else -> strings.downloadingFile.replace("{0}", part.filename)
             }
     val progress = part.progress.coerceIn(0L, 100L).toInt()
