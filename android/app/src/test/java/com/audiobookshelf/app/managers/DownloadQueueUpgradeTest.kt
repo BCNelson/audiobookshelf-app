@@ -25,6 +25,11 @@ import org.robolectric.annotation.Config
  * 0.14.2 models through Paper) and checks the current code restores it and resumes the partial
  * file instead of crashing or starting over. The fixture's part paths live under
  * [FIXTURE_ROOT]: a 1000-byte track with 600 bytes staged, and a finished 50-byte cover.
+ *
+ * To regenerate it, check out the 0.14.2 release (609f9d6) and run a Robolectric test there that
+ * builds the same DownloadItem with the 0.14.2 constructors, saves it with
+ * `DbManager().saveDownloadItem(item)`, and copies `filesDir/downloadItems/li_upgrade.pt` here.
+ * It must be written by the old models: saving it with the current ones would not test an upgrade.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
